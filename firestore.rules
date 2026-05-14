@@ -1,0 +1,65 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitive Helpers
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null && request.auth.token.email_verified == true; }
+    function isOwner(ownerId) { return isSignedIn() && request.auth.uid == ownerId; }
+
+    // User Entity Validation
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'createdAt']) &&
+             data.uid == request.auth.uid &&
+             data.createdAt == request.time &&
+             (data.name is string || !('name' in data)) &&
+             (data.email is string || !('email' in data)) &&
+             (data.photoURL is string || !('photoURL' in data));
+    }
+
+    // Project Entity Validation
+    function isValidProject(data, isCreate) {
+      let isBaseValid = data.keys().hasAll(['title', 'code', 'ownerId', 'published', 'createdAt', 'updatedAt']) &&
+             data.title is string && data.title.size() <= 200 && data.title.size() > 0 &&
+             data.code is string && data.code.size() <= 100000 &&
+             (data.description is string && data.description.size() <= 500 || !('description' in data)) &&
+             data.ownerId == request.auth.uid &&
+             data.published is bool;
+      let timestampValid = isCreate ? (data.createdAt == request.time && data.updatedAt == request.time) : (data.updatedAt == request.time);
+      return isBaseValid && timestampValid;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming()) && incoming().keys().size() <= 5;
+      allow update: if isOwner(userId) && isValidId(userId) &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['name', 'photoURL', 'updatedAt']) &&
+                    (incoming().name is string) && (incoming().photoURL is string || !('photoURL' in incoming()));
+    }
+
+    match /projects/{projectId} {
+      // Allow read if published or if owner
+      allow get: if isValidId(projectId) && (existing().published == true || isOwner(existing().ownerId));
+      // Allow list if filtering by owner or if fetching published projects
+      allow list: if (existing().published == true) || isOwner(existing().ownerId);
+      
+      allow create: if isSignedIn() && isValidId(projectId) && isValidProject(incoming(), true);
+      
+      allow update: if isOwner(existing().ownerId) && isValidId(projectId) && isValidProject(incoming(), false) &&
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().ownerId == existing().ownerId &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['title', 'code', 'description', 'published', 'updatedAt']);
+
+      allow delete: if isOwner(existing().ownerId) && isValidId(projectId);
+    }
+  }
+}
