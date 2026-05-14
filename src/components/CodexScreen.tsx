@@ -23,7 +23,7 @@ export const CodexScreen: React.FC = () => {
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const newFiles = Array.from(e.target.files).map(f => ({ name: f.name, type: f.type || 'text/plain' }));
+      const newFiles = Array.from(e.target.files).map((f: File) => ({ name: f.name, type: f.type || 'text/plain' }));
       setContextFiles(prev => [...prev, ...newFiles]);
     }
   };
